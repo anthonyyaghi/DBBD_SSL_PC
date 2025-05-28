@@ -1,4 +1,5 @@
 import numpy as np
+np.random.seed(42)  # or use a dataset-provided seed per sample
 from typing import *
 import warnings
 

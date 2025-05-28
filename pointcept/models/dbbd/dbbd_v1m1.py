@@ -17,7 +17,7 @@ import numpy as np
 torch.manual_seed(12)
 
 # Pointcept Modules
-from pointcept.models.dbbd.Aggregator import MaxPoolAggregator
+from pointcept.models.dbbd.Aggregator import MLPMaxPoolAggregator
 from pointcept.models.dbbd.Propagator import ConcatPropagation
 from pointcept.models.builder import MODELS, build_model
 from pointcept.models.utils import offset2batch
@@ -424,7 +424,7 @@ class DBBD(nn.Module):
     ):
         super().__init__()
         self.point_encoder = build_model(backbone)
-        self.aggregator = MaxPoolAggregator().to(device)
+        self.aggregator = MLPMaxPoolAggregator().to(device)
         self.propagation_method = ConcatPropagation().to(device)
         
         # Feature dimensionality update

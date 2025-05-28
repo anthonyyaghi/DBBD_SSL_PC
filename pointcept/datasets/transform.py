@@ -7,6 +7,9 @@ Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com)
 Please cite our work if the code is helpful to you.
 """
 
+import os
+import time
+import pickle
 import warnings
 from typing import List, Dict, Any, Tuple
 import random
@@ -14,11 +17,14 @@ import numbers
 import scipy
 import scipy.ndimage
 import scipy.interpolate
-import scipy.stats
 import numpy as np
 import torch
 import copy
 from collections.abc import Sequence, Mapping
+
+from pointcept.utils.logger import get_logger
+logger = get_logger(__name__, color=True)
+VERBOSE = False
 
 from .utils import collect_regions_by_level, save_colored_regions
 from pointcept.utils.registry import Registry
@@ -26,6 +32,23 @@ from .preprocessing.hierarchical_region_proposal import hierarchical_region_prop
 
 TRANSFORMS = Registry("transforms")
 
+from functools import wraps
+
+def time_transform():
+    def decorator(method):
+        @wraps(method)
+        def wrapper(self, *args, **kwargs):
+            if VERBOSE:
+                class_name = self.__class__.__name__
+                start_time = time.time()
+                result = method(self, *args, **kwargs)
+                elapsed = time.time() - start_time
+                logger.info(f"[TIMER] {class_name} took {elapsed:.6f} seconds")
+            else:
+                result = method(self, *args, **kwargs)
+            return result
+        return wrapper
+    return decorator
 
 @TRANSFORMS.register_module()
 class Collect(object):
@@ -39,6 +62,7 @@ class Collect(object):
         self.offset_keys = offset_keys_dict
         self.kwargs = kwargs
 
+    @time_transform()
     def __call__(self, data_dict):
         # **Check if data is invalid**
         if data_dict is None:
@@ -66,6 +90,7 @@ class Copy(object):
             keys_dict = dict(coord="origin_coord", segment="origin_segment")
         self.keys_dict = keys_dict
 
+    @time_transform()
     def __call__(self, data_dict):
         for key, value in self.keys_dict.items():
             if isinstance(data_dict[key], np.ndarray):
@@ -79,27 +104,64 @@ class Copy(object):
 
 @TRANSFORMS.register_module()
 class DBBD(object):
-    def __init__(self, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool, save_point_cloud:bool=False):
+    def __init__(self, dataset_path: str, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool, save_point_cloud:bool=False, uuid:str= ""):
+        self.dataset_path = os.path.abspath(dataset_path)
         self.max_levels = max_levels
         self.num_samples_per_level = num_samples_per_level
         self.min_num_points_list = min_num_points_list
         self.equal_splits = equal_splits
         self.save_point_cloud = save_point_cloud # Used for visualization of the split
         self.index = 0
+        self.uuid = uuid
 
+    @time_transform()
     def __call__(self, data_dict):
-        regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0,min_num_points_list=self.min_num_points_list, equal_splits=self.equal_splits)
-        data_dict["regions"] = regions
+        # regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0, min_num_points_list=self.min_num_points_list, equal_splits=self.equal_splits)
+        # data_dict["regions"] = regions
+        
+        file_dir = os.path.join(self.dataset_path, "saved_regions", data_dict.get("name", "unknown"))
+        os.makedirs(file_dir, exist_ok=True)
+        
+        regions_path = os.path.join(
+            file_dir,
+            f"regions_{self.num_samples_per_level}_{self.max_levels}_equal_{self.equal_splits}_{self.min_num_points_list}.pkl"
+        )
+
+        # Try loading from file
+        if os.path.exists(regions_path):
+            with open(regions_path, 'rb') as f:
+                data_dict["regions"] = pickle.load(f)
+            if VERBOSE:
+                logger.info(f"[CACHED] Loaded regions from: {regions_path}")
+        else:
+            # Generate and save
+            regions = hierarchical_region_proposal(
+                data_dict["coord"],
+                data_dict["color"],
+                num_samples_per_level=self.num_samples_per_level,
+                max_levels=self.max_levels,
+                batch_idx=0,
+                min_num_points_list=self.min_num_points_list,
+                equal_splits=self.equal_splits
+            )
+            data_dict["regions"] = regions
+            with open(regions_path, 'wb') as f:
+                pickle.dump(regions, f)
+            if VERBOSE:
+                logger.info(f"[GENERATED] Saved regions to: {regions_path}")
+        
         if self.save_point_cloud: # Used for visualization of the split
             all_points = data_dict["coord"]
             regions_by_level = collect_regions_by_level(data_dict['regions'])  # Collect regions
             save_colored_regions(all_points, regions_by_level, filename=f"colored_regions_{data_dict['name']}_{self.index}.ply")  # Save colored point cloud
-            self.index += 1
+            
+        self.index += 1
         return data_dict
     
 
 @TRANSFORMS.register_module()
 class ToTensor(object):
+    @time_transform()
     def __call__(self, data):
         if data is None:
             return None
@@ -138,6 +200,7 @@ class Add(object):
             keys_dict = dict()
         self.keys_dict = keys_dict
 
+    @time_transform()
     def __call__(self, data_dict):
         for key, value in self.keys_dict.items():
             data_dict[key] = value
@@ -146,6 +209,7 @@ class Add(object):
 
 @TRANSFORMS.register_module()
 class NormalizeColor(object):
+    @time_transform()
     def __call__(self, data_dict):
         if "color" in data_dict.keys():
             data_dict["color"] = data_dict["color"] / 127.5 - 1
@@ -154,6 +218,7 @@ class NormalizeColor(object):
 
 @TRANSFORMS.register_module()
 class NormalizeCoord(object):
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             # modified from pointnet2
@@ -166,6 +231,7 @@ class NormalizeCoord(object):
 
 @TRANSFORMS.register_module()
 class PositiveShift(object):
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             coord_min = np.min(data_dict["coord"], 0)
@@ -178,6 +244,7 @@ class CenterShift(object):
     def __init__(self, apply_z=True):
         self.apply_z = apply_z
 
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             x_min, y_min, z_min = data_dict["coord"].min(axis=0)
@@ -195,6 +262,7 @@ class RandomShift(object):
     def __init__(self, shift=((-0.2, 0.2), (-0.2, 0.2), (0, 0))):
         self.shift = shift
 
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             shift_x = np.random.uniform(self.shift[0][0], self.shift[0][1])
@@ -209,6 +277,7 @@ class PointClip(object):
     def __init__(self, point_cloud_range=(-80, -80, -3, 80, 80, 1)):
         self.point_cloud_range = point_cloud_range
 
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             data_dict["coord"] = np.clip(
@@ -228,6 +297,7 @@ class RandomDropout(object):
         self.dropout_ratio = dropout_ratio
         self.dropout_application_ratio = dropout_application_ratio
 
+    @time_transform()
     def __call__(self, data_dict):
         if random.random() < self.dropout_application_ratio:
             n = len(data_dict["coord"])
@@ -262,6 +332,7 @@ class RandomRotate(object):
         self.p = p if not self.always_apply else 1
         self.center = center
 
+    @time_transform()
     def __call__(self, data_dict):
         if random.random() > self.p:
             return data_dict
@@ -301,6 +372,7 @@ class RandomRotateTargetAngle(object):
         self.p = p if not self.always_apply else 1
         self.center = center
 
+    @time_transform()
     def __call__(self, data_dict):
         if random.random() > self.p:
             return data_dict
@@ -335,6 +407,7 @@ class RandomScale(object):
         self.scale = scale if scale is not None else [0.95, 1.05]
         self.anisotropic = anisotropic
 
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             scale = np.random.uniform(
@@ -349,6 +422,7 @@ class RandomFlip(object):
     def __init__(self, p=0.5):
         self.p = p
 
+    @time_transform()
     def __call__(self, data_dict):
         if np.random.rand() < self.p:
             if "coord" in data_dict.keys():
@@ -370,6 +444,7 @@ class RandomJitter(object):
         self.sigma = sigma
         self.clip = clip
 
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             jitter = np.clip(
@@ -390,6 +465,7 @@ class ClipGaussianJitter(object):
         self.quantile = 1.96
         self.store_jitter = store_jitter
 
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys():
             jitter = np.random.multivariate_normal(
@@ -408,6 +484,7 @@ class ChromaticAutoContrast(object):
         self.p = p
         self.blend_factor = blend_factor
 
+    @time_transform()
     def __call__(self, data_dict):
         if "color" in data_dict.keys() and np.random.rand() < self.p:
             lo = np.min(data_dict["color"], 0, keepdims=True)
@@ -431,6 +508,7 @@ class ChromaticTranslation(object):
         self.p = p
         self.ratio = ratio
 
+    @time_transform()
     def __call__(self, data_dict):
         if "color" in data_dict.keys() and np.random.rand() < self.p:
             tr = (np.random.rand(1, 3) - 0.5) * 255 * 2 * self.ratio
@@ -444,6 +522,7 @@ class ChromaticJitter(object):
         self.p = p
         self.std = std
 
+    @time_transform()
     def __call__(self, data_dict):
         if "color" in data_dict.keys() and np.random.rand() < self.p:
             noise = np.random.randn(data_dict["color"].shape[0], 3)
@@ -480,6 +559,7 @@ class RandomColorGrayScale(object):
 
         return gray
 
+    @time_transform()
     def __call__(self, data_dict):
         if np.random.rand() < self.p:
             data_dict["color"] = self.rgb_to_grayscale(data_dict["color"], 3)
@@ -633,6 +713,7 @@ class RandomColorJitter(object):
         h = None if hue is None else np.random.uniform(hue[0], hue[1])
         return fn_idx, b, c, s, h
 
+    @time_transform()
     def __call__(self, data_dict):
         (
             fn_idx,
@@ -724,6 +805,7 @@ class HueSaturationTranslation(object):
         self.hue_max = hue_max
         self.saturation_max = saturation_max
 
+    @time_transform()
     def __call__(self, data_dict):
         if "color" in data_dict.keys():
             # Assume color[:, :3] is rgb
@@ -744,6 +826,7 @@ class RandomColorDrop(object):
         self.p = p
         self.color_augment = color_augment
 
+    @time_transform()
     def __call__(self, data_dict):
         if "color" in data_dict.keys() and np.random.rand() < self.p:
             data_dict["color"] *= self.color_augment
@@ -760,6 +843,7 @@ class PartialColorDrop(object):
     def __init__(self, p=0.2):
         self.p = p
 
+    @time_transform()
     def __call__(self, data_dict):
         if "color" in data_dict.keys():
             n = data_dict["color"].shape[0]
@@ -831,6 +915,7 @@ class ElasticDistortion(object):
         coords += interp(coords) * magnitude
         return coords
 
+    @time_transform()
     def __call__(self, data_dict):
         if "coord" in data_dict.keys() and self.distortion_params is not None:
             if random.random() < 0.95:
@@ -866,6 +951,7 @@ class GridSample(object):
         self.return_displacement = return_displacement
         self.project_displacement = project_displacement
 
+    @time_transform()
     def __call__(self, data_dict):
         assert "coord" in data_dict.keys()
         scaled_coord = data_dict["coord"] / np.array(self.grid_size)
@@ -992,6 +1078,7 @@ class SphereCrop(object):
         assert mode in ["random", "center", "all"]
         self.mode = mode
 
+    @time_transform()
     def __call__(self, data_dict):
         point_max = (
             int(self.sample_rate * data_dict["coord"].shape[0])
@@ -1086,6 +1173,7 @@ class SphereCrop(object):
 
 @TRANSFORMS.register_module()
 class ShufflePoint(object):
+    @time_transform()
     def __call__(self, data_dict):
         assert "coord" in data_dict.keys()
         shuffle_index = np.arange(data_dict["coord"].shape[0])
@@ -1109,6 +1197,7 @@ class ShufflePoint(object):
 
 @TRANSFORMS.register_module()
 class CropBoundary(object):
+    @time_transform()
     def __call__(self, data_dict):
         assert "segment" in data_dict
         segment = data_dict["segment"].flatten()
@@ -1138,6 +1227,7 @@ class ContrastiveViewsGenerator(object):
         self.view_keys = view_keys
         self.view_trans = Compose(view_trans_cfg)
 
+    @time_transform()
     def __call__(self, data_dict):
         view1_dict = dict()
         view2_dict = dict()
@@ -1159,6 +1249,7 @@ class InstanceParser(object):
         self.segment_ignore_index = segment_ignore_index
         self.instance_ignore_index = instance_ignore_index
 
+    @time_transform()
     def __call__(self, data_dict):
         coord = data_dict["coord"]
         segment = data_dict["segment"]
@@ -1207,6 +1298,7 @@ class Compose(object):
         for t_cfg in self.cfg:
             self.transforms.append(TRANSFORMS.build(t_cfg))
 
+    @time_transform()
     def __call__(self, data_dict):
         for t in self.transforms:
             data_dict = t(data_dict)
@@ -1324,6 +1416,7 @@ class HierarchicalRegions(object):
             'batch_idx': batch_idx
         }
 
+    @time_transform()
     def __call__(self, data_dict):
         points = data_dict["coord"]
         regions = HierarchicalRegions.hierarchical_region_proposal(points, self.num_samples_per_level, self.max_levels, batch_idx=0)  # TODO: fix batch_idx

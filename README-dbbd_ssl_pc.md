@@ -7,15 +7,15 @@ Then, unzip the file in the `data` folder inside the root of the repository.
 
 ### Downsample the data
 Next, we need to downsample the dataset to a specific number of points, while removing those that do not have enough points.
-To do so, run the `downsample.py` file. 
+To do so, run the `processing_scripts/downsample.py` file. 
 Command template: 
 ```sh
-python downsample.py --root_dir /path/to/dataset --output_dir /path/to/output --max_points 30000
+python processing_scripts/downsample.py --root_dir /path/to/dataset --output_dir /path/to/output --max_points 30000
  ```
 
 Example:
 ```bash
-python downsample.py --root_dir ./data/scannet_original --output_dir ./data/scannet --max_points 30000
+python processing_scripts/downsample.py --root_dir ./data/scannet_original --output_dir ./data/scannet --max_points 30000
 ```
 
 

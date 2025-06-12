@@ -424,11 +424,12 @@ class DBBD(nn.Module):
     ):
         super().__init__()
         self.point_encoder = build_model(backbone)
-        self.aggregator = MLPMaxPoolAggregator().to(device)
-        self.propagation_method = ConcatPropagation().to(device)
+        self.aggregator: MLPMaxPoolAggregator = MLPMaxPoolAggregator().to(device)
+        self.propagation_method: ConcatPropagation = ConcatPropagation().to(device)
         
         # Feature dimensionality update
         self.propagation_method.update_feature_dim(input_dim=99, feature_dim=96)
+        self.aggregator.update_feature_dim(input_dim=96, output_dim=96)
         
         self.output_dim = output_dim
         self.num_samples_per_level=num_samples_per_level

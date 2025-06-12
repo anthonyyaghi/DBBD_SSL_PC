@@ -1,6 +1,6 @@
 _base_ = ["../_base_/default_runtime.py"]
 # misc custom setting
-batch_size = 2  # bs: total bs in all gpus
+batch_size = 8  # bs: total bs in all gpus
 mix_prob = 0
 equal_splits = False
 save_point_cloud = False
@@ -8,13 +8,13 @@ alpha_weight = 0.5
 beta_weight = 0.5
 empty_cache = False
 enable_amp = False
-num_worker=1
+num_worker=3
 evaluate = False
-mx_lvl = 1
+mx_lvl = 3
 num_samples_per_level=2
-point_max=10000
-min_num_points_list = [4000, 1500, 100]
-
+point_max=19000
+min_num_points_list = [9000, 4000, 1800]
+ 
 find_unused_parameters = True # NOTE ADDED FOR MULTI-GPU TRAINING
 
 # model settings
@@ -35,15 +35,15 @@ model = dict(
     num_samples_per_level=num_samples_per_level,
     max_levels=mx_lvl,
 )
-
+ 
 # scheduler settings
 epoch = 3000
-optimizer = dict(type="SGD", lr=0.1, momentum=0.9, weight_decay=0.0001, nesterov=True)
+optimizer = dict(type="SGD", lr=0.01, momentum=0.9, weight_decay=0.0001, nesterov=True)
 scheduler = dict(type="PolyLR")
-
+ 
 # dataset settings
 dataset_type = "ScanNetDataset"
-data_root = "data/scannet"
+data_root = "data/scannet_8"
 
 data = dict(
         num_classes=20,
@@ -253,5 +253,5 @@ hooks = [
     dict(type="CheckpointLoader"),
     dict(type="IterationTimer", warmup_iter=2),
     dict(type="InformationWriter"),
-    dict(type="CheckpointSaver", save_freq=None),
+    dict(type="CheckpointSaver", save_freq=10),
 ]

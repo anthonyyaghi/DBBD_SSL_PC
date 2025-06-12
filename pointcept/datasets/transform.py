@@ -104,51 +104,18 @@ class Copy(object):
 
 @TRANSFORMS.register_module()
 class DBBD(object):
-    def __init__(self, dataset_path: str, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool, save_point_cloud:bool=False, uuid:str= ""):
-        self.dataset_path = os.path.abspath(dataset_path)
+    def __init__(self, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool, save_point_cloud:bool=False):
         self.max_levels = max_levels
         self.num_samples_per_level = num_samples_per_level
         self.min_num_points_list = min_num_points_list
         self.equal_splits = equal_splits
         self.save_point_cloud = save_point_cloud # Used for visualization of the split
         self.index = 0
-        self.uuid = uuid
 
     @time_transform()
     def __call__(self, data_dict):
-        # regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0, min_num_points_list=self.min_num_points_list, equal_splits=self.equal_splits)
-        # data_dict["regions"] = regions
-        
-        file_dir = os.path.join(self.dataset_path, "saved_regions", data_dict.get("name", "unknown"))
-        os.makedirs(file_dir, exist_ok=True)
-        
-        regions_path = os.path.join(
-            file_dir,
-            f"regions_{self.num_samples_per_level}_{self.max_levels}_equal_{self.equal_splits}_{self.min_num_points_list}.pkl"
-        )
-
-        # Try loading from file
-        if os.path.exists(regions_path):
-            with open(regions_path, 'rb') as f:
-                data_dict["regions"] = pickle.load(f)
-            if VERBOSE:
-                logger.info(f"[CACHED] Loaded regions from: {regions_path}")
-        else:
-            # Generate and save
-            regions = hierarchical_region_proposal(
-                data_dict["coord"],
-                data_dict["color"],
-                num_samples_per_level=self.num_samples_per_level,
-                max_levels=self.max_levels,
-                batch_idx=0,
-                min_num_points_list=self.min_num_points_list,
-                equal_splits=self.equal_splits
-            )
-            data_dict["regions"] = regions
-            with open(regions_path, 'wb') as f:
-                pickle.dump(regions, f)
-            if VERBOSE:
-                logger.info(f"[GENERATED] Saved regions to: {regions_path}")
+        regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0, min_num_points_list=self.min_num_points_list, equal_splits=self.equal_splits)
+        data_dict["regions"] = regions
         
         if self.save_point_cloud: # Used for visualization of the split
             all_points = data_dict["coord"]
